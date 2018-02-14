@@ -26,8 +26,7 @@
 #include <fcntl.h>
 #include "DirectHW.h"
 
-/* define DEBUG to print Framework debugging information */
-static const int debug;
+extern int verbose;
 
 #ifdef __darwin__
 
@@ -269,7 +268,7 @@ void *map_physical(uint64_t phys_addr, size_t len)
 	in.addr = phys_addr;
 	in.size = len;
 
-	if (debug)
+	if (verbose)
 		fprintf(stderr, "map_phys: phys %08"PRIx64", %08zx\n", phys_addr, len);
 
 #if !defined(__LP64__) && defined(WANT_OLD_API)
@@ -321,7 +320,7 @@ void *map_physical(uint64_t phys_addr, size_t len)
 		return MAP_FAILED;
 	}
 
-	if (debug)
+	if (verbose)
 		fprintf(stderr, "map_phys: virt %08"PRIx64", %08zx\n", addr, (size_t) size);
 
         return (void *)(addr + page_offset);
@@ -436,7 +435,7 @@ void *map_physical(uint64_t phys_addr, size_t len)
 
 	close(fd);
 
-	if (debug)
+	if (verbose)
 		fprintf(stderr, "map_phys: phys %08"PRIx64" len %08zx virt %08"PRIx64"\n", phys_addr, len, addr);
 
         return (void *)(addr + page_offset);

@@ -15,11 +15,12 @@
 #include "spiflash.h"
 
 static int force = 0;
-static int verbose = 0;
+int verbose = 0;
 
 static const struct option long_options[] = {
 	{ "force",		0, NULL, 'f' },
 	{ "verbose",		0, NULL, 'v' },
+	{ "pcibar",		1, NULL, 'p' },
 	{ "read",		1, NULL, 'r' },
 	{ "write",		1, NULL, 'w' },
 	{ "offset",		1, NULL, 'O' },
@@ -30,7 +31,7 @@ static const struct option long_options[] = {
 
 
 static const char usage[] =
-"Usage: sudo spiflash [options]\n"
+"Usage: sudo flashwrite [options]\n"
 "\n"
 "-h | -? | --help       This help\n"
 "-v | --verbose         Increase verbosity\n"
@@ -38,6 +39,7 @@ static const char usage[] =
 "-w | --write file      Read the file and write to the ROM range\n"
 "-O | --offset N        Flash offset to start writing at, otherwise 0\n"
 "-n | --length N        Length in bytes to read/write (default whole ROM)\n"
+"-p | --pcibar 0x....   PCIE XBAR address\n"
 "-f | --force           Write all flash pages, not just the changed ones\n"
 "\n"
 "WARNING: This tool can permanently brick your machine!\n"
@@ -198,12 +200,13 @@ main(
 	unsigned offset = 0;
 	unsigned length = 0;
 	const char * filename = NULL;
+	uint64_t pcie_xbar = PCIEXBAR;
 
 	spiflash_t * sp = calloc(1, sizeof(*sp));
 	if (!sp)
 		return EXIT_FAILURE;
 
-	while ((opt = getopt_long(argc, argv, "h?fvO:n:r:w:", long_options, NULL)) != -1)
+	while ((opt = getopt_long(argc, argv, "h?fvO:n:r:w:p:", long_options, NULL)) != -1)
 	{
 		switch(opt)
 		{
@@ -212,6 +215,9 @@ main(
 			break;
 		case 'n':
 			length = strtoul(optarg, NULL, 0);
+			break;
+		case 'p':
+			pcie_xbar = strtoul(optarg, NULL, 0);
 			break;
 		case 'v':
 			verbose++;
@@ -246,7 +252,7 @@ main(
 
 	sp->verbose = verbose;
 
-	if (spiflash_init(sp, PCIEXBAR) < 0)
+	if (spiflash_init(sp, pcie_xbar) < 0)
 	{
 		perror("spiflash_init");
 		return -1;

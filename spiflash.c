@@ -24,6 +24,7 @@
 
 #include "spiflash.h"
 
+
 /*
 Normally these macros are the junction between userspace
 and kernel space. So they've been replaced to assume
@@ -638,7 +639,12 @@ find_spibar(
 	if (sp->lpc_base == NULL)
 		return -1;
 
+	if (sp->verbose)
+		printf("lpc_base=%x\n", sp->lpc_base);
+
  	uint64_t rcba = read_mmio_dword(sp->lpc_base, RCBA_OFFSET);
+	if (sp->verbose)
+		printf("rcba=%08x\n", rcba);
 
 	//should never occur, but...
 	if(!(rcba & 1))
@@ -649,6 +655,8 @@ find_spibar(
 	uint8_t * const spibar_ptr = map_physical(rcba, 65536);
 
 	sp->spibar = spibar_ptr + SPIBAR_OFFSET;
+	if (sp->verbose)
+		printf("spibar=%08x\n", sp->spibar);
 
 	return 0;
 }
@@ -741,7 +749,8 @@ spiflash_init(
 	if (find_spibar(sp, pcie_xbar + PCIEXBAR_LPC_OFFSET) < 0)
 		return -1;
 
-	//fprintf(stderr, "%s: FRAP %04x\n", __func__, read_mmio_dword(sp->spibar, FRAP_OFFSET));
+	if (sp->verbose)
+		printf("FRAP=%04x\n", read_mmio_dword(sp->spibar, FRAP_OFFSET));
 
 	return 0;
 }
