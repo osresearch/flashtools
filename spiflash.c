@@ -60,14 +60,9 @@ MMIO_MACRO(uint8_t,byte)
 MMIO_MACRO(uint16_t,short)
 MMIO_MACRO(uint32_t,dword)
 
-//TODO: BEGIN NEEDS AUTODISCOVERING
-//HARDCODED FOR MBP11,2 for now
+#define PCIEXBAR_LPC_OFFSET 0xF8000
 #define SPIBAR_OFFSET 0x3800
 #define SPIBAR_REGION_SIZE 0x200
-#define PCIEXBAR 0xE0000000
-//TODO: END NEEDS AUTODISCOVERING
-
-#define PCIEXBAR_LPC_OFFSET 0xF8000 //F*
 #define RCBA_OFFSET 0xF0
 #define BIOS_CNTL_OFFSET 0xdc
 #define MAX_SPI_REGIONS 5
@@ -633,12 +628,12 @@ spiflash_read(
 // must read RCBA 32-bits at a time
 static int
 find_spibar(
-	spiflash_t * const sp
+	spiflash_t * const sp,
+	uint64_t lpc_phys
 )
 {
 	iopl(0);
 
-	uint64_t const lpc_phys = PCIEXBAR + PCIEXBAR_LPC_OFFSET;
 	sp->lpc_base = map_physical(lpc_phys, 0x1000);
 	if (sp->lpc_base == NULL)
 		return -1;
@@ -739,10 +734,11 @@ spiflash_write_enable(
 
 int
 spiflash_init(
-	spiflash_t * const sp
+	spiflash_t * const sp,
+	uint64_t pcie_xbar
 )
 {
-	if (find_spibar(sp) < 0)
+	if (find_spibar(sp, pcie_xbar + PCIEXBAR_LPC_OFFSET) < 0)
 		return -1;
 
 	//fprintf(stderr, "%s: FRAP %04x\n", __func__, read_mmio_dword(sp->spibar, FRAP_OFFSET));

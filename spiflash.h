@@ -15,7 +15,8 @@ typedef struct {
 
 extern int
 spiflash_init(
-	spiflash_t * sp
+	spiflash_t * sp,
+	uint64_t pci_exbar
 );
 
 

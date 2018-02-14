@@ -177,6 +177,13 @@ write_to_spi(
 	return EXIT_SUCCESS;
 }
 
+//TODO: BEGIN NEEDS AUTODISCOVERING
+#ifdef __darwin__
+#define PCIEXBAR 0xE0000000 // MBP11,2
+#else
+#define PCIEXBAR 0x80000000 // Linux puts it here?
+#endif
+
 int
 main(
 	int argc,
@@ -239,7 +246,7 @@ main(
 
 	sp->verbose = verbose;
 
-	if (spiflash_init(sp) < 0)
+	if (spiflash_init(sp, PCIEXBAR) < 0)
 	{
 		perror("spiflash_init");
 		return -1;
