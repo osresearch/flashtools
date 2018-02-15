@@ -12,7 +12,7 @@ CFLAGS += \
 
 all: $(TARGETS)
 
-flashwrite: main.o spiflash.o DirectHW.o
+flashwrite: flashwrite.o spiflash.o DirectHW.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 ifeq ($(KERNEL),Darwin)
