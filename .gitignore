@@ -1,0 +1,7 @@
+.*.d
+.*.swp
+*.o
+.*
+flashwrite
+peek
+poke
