@@ -1,4 +1,4 @@
-TARGETS += flashwrite
+TARGETS += flashtool
 TARGETS += poke
 TARGETS += peek
 
@@ -14,7 +14,7 @@ CFLAGS += \
 
 all: $(TARGETS)
 
-flashwrite: flashwrite.o spiflash.o DirectHW.o
+flashtool: flashtool.o spiflash.o DirectHW.o
 peek: peek.o DirectHW.o util.o
 poke: poke.o DirectHW.o util.o
 
