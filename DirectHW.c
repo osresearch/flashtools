@@ -436,7 +436,7 @@ void *map_physical(uint64_t phys_addr, size_t len)
 	close(fd);
 
 	if (verbose)
-		fprintf(stderr, "map_phys: phys %08"PRIx64" len %08zx virt %08"PRIx64"\n", phys_addr, len, addr);
+		fprintf(stderr, "map_phys: phys %08"PRIx64" len %08zx virt %p\n", phys_addr, len, addr);
 
         return (void *)(addr + page_offset);
 }
