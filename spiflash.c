@@ -65,7 +65,13 @@ MMIO_MACRO(uint32_t,dword)
 #define SPIBAR_OFFSET 0x3800
 #define SPIBAR_REGION_SIZE 0x200
 #define RCBA_OFFSET 0xF0
-#define BIOS_CNTL_OFFSET 0xdc
+
+#define BIOS_CNTL_OFFSET	0xdc
+#define BIOS_CNTL_BIOSWE	0x01
+#define BIOS_CNTL_BLE		0x02
+#define BIOS_CNTL_TOPSWAP	0x10
+#define BIOS_CNTL_SMMBWP	0x20
+
 #define MAX_SPI_REGIONS 5
 #define FDATA_OFFSET 0x10
 #define FLADDR_OFFSET 0x08
@@ -101,6 +107,10 @@ MMIO_MACRO(uint32_t,dword)
 #define HSFS_FLOCKDN		(0x1 << HSFS_FLOCKDN_OFF)
 
 
+// The PRR (Protected Range Registers) are in the SPI BAR region
+#define SPIBAR_PR0_OFFSET 0x74
+
+
 /** Read the SPI flash status (HSFS) register.
  *
  * Bits of interest:
@@ -128,6 +138,16 @@ spiflash_hsfs_clear(
 {
 	write_mmio_short(sp->spibar, HSFS_OFFSET, spiflash_hsfs(sp));
 }
+
+
+void
+spiflash_hsfs_flockdn(
+	spiflash_t * const sp
+)
+{
+	write_mmio_short(sp->spibar, HSFS_OFFSET, HSFS_FLOCKDN);
+}
+
 
 
 static const char *
@@ -640,11 +660,11 @@ find_spibar(
 		return -1;
 
 	if (sp->verbose)
-		printf("lpc_base=%x\n", sp->lpc_base);
+		printf("lpc_base=%p\n", sp->lpc_base);
 
  	uint64_t rcba = read_mmio_dword(sp->lpc_base, RCBA_OFFSET);
 	if (sp->verbose)
-		printf("rcba=%08x\n", rcba);
+		printf("rcba=%08"PRIx64"\n", rcba);
 
 	//should never occur, but...
 	if(!(rcba & 1))
@@ -656,7 +676,7 @@ find_spibar(
 
 	sp->spibar = spibar_ptr + SPIBAR_OFFSET;
 	if (sp->verbose)
-		printf("spibar=%08x\n", sp->spibar);
+		printf("spibar=%p\n", sp->spibar);
 
 	return 0;
 }
@@ -718,25 +738,59 @@ spiflash_size(
 }
 
 
+uint8_t
+spiflash_bios_cntl(
+	spiflash_t * const sp
+)
+{
+	return read_mmio_byte(sp->lpc_base, BIOS_CNTL_OFFSET);
+}
+
+
+uint8_t
+spiflash_set_bios_cntl(
+	spiflash_t * const sp,
+	uint8_t new_bios_cntl
+)
+{
+        write_mmio_byte(sp->lpc_base, BIOS_CNTL_OFFSET, new_bios_cntl);
+	return spiflash_bios_cntl(sp);
+}
+
+
+void
+spiflash_prr(
+	spiflash_t * const sp,
+	uint8_t which,
+	uint32_t value
+)
+{
+	if (which > 4)
+		return;
+
+	write_mmio_dword(sp->spibar, SPIBAR_PR0_OFFSET + which*4, value);
+}
+
+
+
 int
 spiflash_write_enable(
 	spiflash_t * const sp
 )
 {
-        const uint8_t bios_cntl
-		= read_mmio_byte(sp->lpc_base, BIOS_CNTL_OFFSET);
+        const uint8_t bios_cntl = spiflash_bios_cntl(sp);
 
 	if (sp->verbose)
         fprintf(stderr, "%s: bios_cntl=%x\n", __func__, bios_cntl);
 
-        write_mmio_byte(sp->lpc_base, BIOS_CNTL_OFFSET, bios_cntl | 1);
-
-        const uint8_t new_bios_cntl
-		= read_mmio_byte(sp->lpc_base, BIOS_CNTL_OFFSET);
+        const uint8_t new_bios_cntl =
+		spiflash_set_bios_cntl(sp, bios_cntl | BIOS_CNTL_BIOSWE);
 
 	if (sp->verbose)
         fprintf(stderr, "%s: new_bios_cntl=%x\n", __func__, new_bios_cntl);
-	return new_bios_cntl & 1 ? 0 : -1;
+
+	// if we are unable to set the write enable bit, signal a failure
+	return new_bios_cntl & BIOS_CNTL_BIOSWE ? 0 : -1;
 }
 
 
@@ -753,4 +807,30 @@ spiflash_init(
 		printf("FRAP=%04x\n", read_mmio_dword(sp->spibar, FRAP_OFFSET));
 
 	return 0;
+}
+
+
+void
+spiflash_info(
+	spiflash_t * const sp
+)
+{
+        const uint8_t bios_cntl
+		= read_mmio_byte(sp->lpc_base, BIOS_CNTL_OFFSET);
+
+	printf("BIOS_CNTL=%02x:%s%s%s%s\n",
+		bios_cntl,
+		bios_cntl & BIOS_CNTL_BIOSWE ? " BIOSWE" : "",
+		bios_cntl & BIOS_CNTL_BLE ? " BLE" : "",
+		bios_cntl & BIOS_CNTL_TOPSWAP ? " TOPSWAP" : "",
+		bios_cntl & BIOS_CNTL_SMMBWP ? " SMMBWP" : ""
+	);
+
+	printf("HSFS=%s\n", spiflash_hsfs_str(sp));
+
+	for(int i = 0 ; i < 5 ; i++)
+	{
+		const uint32_t prr = read_mmio_dword(sp->spibar, SPIBAR_PR0_OFFSET + i*4);
+		printf("PR%d=%08x\n", i, prr);
+	}
 }

@@ -26,12 +26,19 @@ static const struct option long_options[] = {
 	{ "offset",		1, NULL, 'O' },
 	{ "length",		1, NULL, 'n' },
 	{ "help",		0, NULL, 'h' },
+	{ "info",		0, NULL, 'i' },
+	{ "bioscntl",           1, NULL, 'B' },
+	{ "flockdn",            0, NULL, 'F' },
+	{ "prr0",               1, NULL, '0' },
+	{ "prr1",               1, NULL, '1' },
+	{ "prr2",               1, NULL, '2' },
+	{ "prr3",               1, NULL, '3' },
 	{ NULL,			0, NULL, 0 },
 };
 
 
 static const char usage[] =
-"Usage: sudo flashwrite [options]\n"
+"Usage: sudo flashtool [options]\n"
 "\n"
 "-h | -? | --help       This help\n"
 "-v | --verbose         Increase verbosity\n"
@@ -41,6 +48,16 @@ static const char usage[] =
 "-n | --length N        Length in bytes to read/write (default whole ROM)\n"
 "-p | --pcibar 0x....   PCIE XBAR address\n"
 "-f | --force           Write all flash pages, not just the changed ones\n"
+"\n"
+"Platform lockdown options:\n"
+"-i | --info            Read the BIOS_CNTL and PRR registers\n"
+"-B | --bioscntl 0xXX   Set the BIOS_CNTL register\n"
+"-F | --flockdn         Set FLOCKDN to lock the PRR\n"
+"-0 | --prr0 0xXXXX     Set Protected Range Register 0\n"
+"-1 | --prr1 0xXXXX     Set Protected Range Register 1\n"
+"-2 | --prr2 0xXXXX     Set Protected Range Register 2\n"
+"-3 | --prr3 0xXXXX     Set Protected Range Register 3\n"
+"-4 | --prr4 0xXXXX     Set Protected Range Register 4\n"
 "\n"
 "WARNING: This tool can permanently brick your machine!\n"
 "Use with caution, especially if you do not have an ISP to fix the\n"
@@ -193,20 +210,30 @@ main(
 )
 {
 	const char * const prog_name = argv[0];
+	if (argc <= 1)
+	{
+		fprintf(stderr, "%s", usage);
+		return EXIT_FAILURE;
+	}
 
 	int opt;
 	int do_read = 0;
 	int do_write = 0;
+	int show_info = 0;
 	unsigned offset = 0;
 	unsigned length = 0;
 	const char * filename = NULL;
 	uint64_t pcie_xbar = PCIEXBAR;
+	uint32_t prr[5] = {};
+	uint16_t bios_cntl = 0;
+	int do_flockdn = 0;
+	int do_prr = 0;
 
 	spiflash_t * sp = calloc(1, sizeof(*sp));
 	if (!sp)
 		return EXIT_FAILURE;
 
-	while ((opt = getopt_long(argc, argv, "h?fvO:n:r:w:p:", long_options, NULL)) != -1)
+	while ((opt = getopt_long(argc, argv, "h?fviO:n:r:w:p:0:1:2:3:4:F:B:", long_options, NULL)) != -1)
 	{
 		switch(opt)
 		{
@@ -224,6 +251,20 @@ main(
 			break;
 		case 'f':
 			force++;
+			break;
+		case 'i':
+			show_info = 1;
+			if (verbose == 0) verbose = 1;
+			break;
+		case '0': case '1': case '2': case '3': case '4':
+			prr[opt - '0'] = strtoul(optarg, NULL, 0);
+			do_prr = 1;
+			break;
+		case 'F':
+			do_flockdn = 1;
+			break;
+		case 'B':
+			bios_cntl = strtoul(optarg, NULL, 0);
 			break;
 		case 'r':
 			do_read = 1;
@@ -267,6 +308,34 @@ main(
 	const unsigned flash_size = spiflash_size(sp);
 	if (verbose)
 		printf("flash size: 0x%08x\n", flash_size);
+
+	if (do_prr || do_flockdn || bios_cntl)
+	{
+		// do the PRR first before locking them
+		for(int i = 0 ; i < 5 ; i++)
+		{
+			if (prr[i] != 0)
+				spiflash_prr(sp, i, prr[i]);
+		}
+
+		if (do_flockdn)
+			spiflash_hsfs_flockdn(sp);
+
+		if (bios_cntl)
+			spiflash_set_bios_cntl(sp, bios_cntl);
+
+		// if we are verbose, print the new values
+		if (verbose)
+			spiflash_info(sp);
+		return EXIT_SUCCESS;
+	}
+
+	if (show_info)
+	{
+		// we're not flashing, we're just reading the info
+		spiflash_info(sp);
+		return EXIT_SUCCESS;
+	}
 
 	if (offset > flash_size)
 	{

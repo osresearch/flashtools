@@ -20,6 +20,40 @@ spiflash_init(
 );
 
 
+extern void
+spiflash_info(
+	spiflash_t * sp
+);
+
+
+extern uint8_t
+spiflash_bios_cntl(
+	spiflash_t * const sp
+);
+
+
+extern uint8_t
+spiflash_set_bios_cntl(
+	spiflash_t * const sp,
+	uint8_t new_bios_cntl
+);
+
+
+extern void
+spiflash_prr(
+	spiflash_t * const sp,
+	uint8_t which,
+	uint32_t value
+);
+
+
+// Set the FLOCKDN bit -- this requires a reboot to unset
+extern void
+spiflash_hsfs_flockdn(
+	spiflash_t * const sp
+);
+
+
 extern int
 spiflash_write_enable(
 	spiflash_t * const sp
