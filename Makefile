@@ -1,4 +1,6 @@
 TARGETS += flashwrite
+TARGETS += poke
+TARGETS += peek
 
 CFLAGS += \
 	-std=c99 \
@@ -13,6 +15,10 @@ CFLAGS += \
 all: $(TARGETS)
 
 flashwrite: flashwrite.o spiflash.o DirectHW.o
+peek: peek.o DirectHW.o util.o
+poke: poke.o DirectHW.o util.o
+
+$(TARGETS):
 	$(CC) $(LDFLAGS) -o $@ $^
 
 ifeq ($(KERNEL),Darwin)
