@@ -200,7 +200,8 @@ write_to_spi(
 #ifdef __darwin__
 #define PCIEXBAR 0xE0000000 // MBP11,2
 #else
-#define PCIEXBAR 0x80000000 // Linux puts it here?
+#define PCIEXBAR 0x80000000 // Winterfell
+//#define PCIEXBAR 0xF8000000 // x230
 #endif
 
 int
