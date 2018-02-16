@@ -15,7 +15,6 @@
 #include <strings.h>
 #include <ctype.h>
 #include <unistd.h>
-#include "DirectHW.h"
 #include "util.h"
 
 int verbose = 0;

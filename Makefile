@@ -14,18 +14,12 @@ CFLAGS += \
 
 all: $(TARGETS)
 
-flashtool: flashtool.o spiflash.o DirectHW.o
-peek: peek.o DirectHW.o util.o
-poke: poke.o DirectHW.o util.o
+flashtool: flashtool.o spiflash.o util.o
+peek: peek.o util.o
+poke: poke.o util.o
 
 $(TARGETS):
 	$(CC) $(LDFLAGS) -o $@ $^
-
-ifeq ($(KERNEL),Darwin)
-CFLAGS += -D__darwin__
-LDFLAGS += -framework IOKit
-endif
-
 
 clean:
 	$(RM) *.o .*.d $(TARGETS)

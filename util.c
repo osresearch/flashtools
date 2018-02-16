@@ -6,10 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <strings.h>
 #include <ctype.h>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #include "util.h"
+
 
 static char
 printable(
@@ -109,4 +114,42 @@ memcpy_width(
 		fprintf(stderr, "width %zu not supported\n", width);
 		exit(EXIT_FAILURE);
 	}
+}
+
+
+void *
+map_physical(
+	uint64_t phys_addr,
+	size_t len
+)
+{
+	// fixup phys_addr and len if not page aligned
+	const uint64_t page_mask = 0xFFF;
+	uint64_t page_offset = phys_addr & page_mask;
+	phys_addr &= ~page_mask;
+	len = (len + page_offset + page_mask) & ~page_mask;
+
+	int fd = open("/dev/mem", O_RDWR);
+	if (fd < 0)
+		return NULL;
+
+	void * addr = mmap(
+		NULL,
+		len,
+		PROT_READ|PROT_WRITE,
+		MAP_SHARED,
+		fd,
+		phys_addr
+	);
+	if (addr == MAP_FAILED)
+	{
+		int tmp_errno = errno;
+		close(fd);
+		errno = tmp_errno;
+		return NULL;
+	}
+
+	close(fd);
+
+        return (void *)(addr + page_offset);
 }

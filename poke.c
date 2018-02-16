@@ -12,7 +12,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <getopt.h>
-#include "DirectHW.h"
 #include "util.h"
 
 int verbose = 0;

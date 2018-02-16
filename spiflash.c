@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <inttypes.h>
-#include "DirectHW.h"
+#include "util.h"
 #endif
 
 #include "spiflash.h"

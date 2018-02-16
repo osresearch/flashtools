@@ -2,7 +2,13 @@
 #define _hexdump_h_
 
 #include <stdint.h>
+#include <sys/io.h>
 
+extern void *
+map_physical(
+	uint64_t phys_addr,
+	size_t len
+);
 
 extern void
 hexdump(
