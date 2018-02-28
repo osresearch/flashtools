@@ -2,6 +2,6 @@
 .*.swp
 *.o
 .*
-flashwrite
+flashtool
 peek
 poke
