@@ -77,15 +77,17 @@ read_from_spi(
 
 	if (length == 0)
 		length = flash_size - offset;
-	
+
 	if (offset + length > flash_size)
 	{
-		fprintf(stderr, "offset %08x + length %08x > flash_size %08x\n",
+		fprintf(stderr, "offset %08x + length %08x > flash_size %08x%s\n",
 			offset,
 			length,
-			flash_size
+			flash_size,
+			force ? " but forcing anyway" : ""
 		);
-		return EXIT_FAILURE;
+		if (!force)
+			return EXIT_FAILURE;
 	}
 
 	uint8_t * const buf = calloc(1, length);
@@ -167,12 +169,14 @@ write_to_spi(
 
 	if (offset + length > flash_size)
 	{
-		fprintf(stderr, "offset %08x + length %08x > flash size %08x\n",
+		fprintf(stderr, "offset %08x + length %08x > flash size %08x%s\n",
 			offset,
 			length,
-			flash_size
+			flash_size,
+			force ? " but forcing anyway" : ""
 		);
-		return EXIT_FAILURE;
+		if (!force)
+			return EXIT_FAILURE;
 	}
 
 	if (spiflash_write_enable(sp) < 0)
@@ -340,11 +344,13 @@ main(
 
 	if (offset > flash_size)
 	{
-		fprintf(stderr, "offset %08x > flash size %08x\n",
+		fprintf(stderr, "offset %08x > flash size %08x%s\n",
 			offset,
-			flash_size
+			flash_size,
+			force ? " but forcing anyway" : ""
 		);
-		return EXIT_FAILURE;
+		if (!force)
+			return EXIT_FAILURE;
 	}
 
 
