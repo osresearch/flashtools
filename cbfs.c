@@ -14,7 +14,6 @@
 #define CBFS_HEADER_VERSION1 0x31313131
 #define CBFS_HEADER_VERSION2 0x31313132
 #define CBFS_HEADER_VERSION  CBFS_HEADER_VERSION2
-#define CBFS_FILE_TYPE_RAW 0x50
 
 int verbose = 0;
 
@@ -33,9 +32,9 @@ static const char usage[] =
 "\n"
 "-h | -? | --help       This help\n"
 "-v | --verbose         Increase verbosity\n"
-"-r | --read file       Read the CBFS filed and dump to stdout\n"
-"-l | --list            List the files of specified type in the CBFS\n"
-"-t | --type 50         Filter to CBFS file type (hex, default is raw=50)\n"
+"-r | --read file       Export a CBFS file to stdout\n"
+"-l | --list            List the names of CBFS files\n"
+"-t | --type 50         Filter to specific CBFS file type (hex)\n"
 "\n";
 
 struct cbfs_header {
@@ -76,7 +75,7 @@ int main(int argc, char** argv) {
 	int do_read = 0;
 	int do_list = 0;
 	int do_type = 0;
-	uint32_t cbfs_file_type = CBFS_FILE_TYPE_RAW;
+	uint32_t cbfs_file_type = 0;
 	const char * filename = NULL;
 	while ((opt = getopt_long(argc, argv, "h?vlr:t:",
 		long_options, NULL)) != -1)
