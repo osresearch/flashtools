@@ -34,4 +34,11 @@ memcpy_width(
 	mem_op_t op
 );
 
+extern void
+copy_physical(
+	uint64_t phys_addr,
+	size_t len,
+	volatile void *dest
+);
+
 #endif
