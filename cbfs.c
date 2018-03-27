@@ -21,7 +21,7 @@ static const struct option long_options[] = {
 	{ "verbose",		0, NULL, 'v' },
 	{ "read",		1, NULL, 'r' },
 	{ "list",		0, NULL, 'l' },
-	{ "type",		0, NULL, 't' },
+	{ "type",		1, NULL, 't' },
 	{ "help",		0, NULL, 'h' },
 	{ NULL,			0, NULL, 0 },
 };
@@ -105,6 +105,11 @@ int main(int argc, char** argv) {
 		}
 	}
 
+	if (!do_list && !do_read) {
+		fprintf(stderr, "%s", usage);
+		return EXIT_FAILURE;
+	}
+
 	argc -= optind;
 	argv += optind;
 	if (argc != 0)
@@ -113,14 +118,8 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	}
 
-	int fd;
-	fd = open("/dev/mem", O_RDONLY);
-	if (fd < 0) {
-		fprintf(stderr, "Failed to open /dev/mem : %s\n", strerror(errno));
-		return EXIT_FAILURE;
-	}
-
 	uint64_t end = 0x100000000;
+
 	if (verbose) {
 		fprintf(stderr, "Seeking to %lx\n", end-4);
 	}
@@ -131,18 +130,13 @@ int main(int argc, char** argv) {
 		fprintf(stderr, "Header Offset: %d\n", header_delta);
 	}
 
-	uint64_t header_off;
-	if (header_delta < 0) {
-		header_off = end - ((uint64_t)(-header_delta));
-	} else {
-		header_off = ((uint64_t)header_delta);
-	}
+	uint64_t header_off = end + header_delta;
 
 	if (verbose) {
 		fprintf(stderr, "Seeking to %lx\n", header_off);
 	}
 	struct cbfs_header header;
-	copy_physical(header_off, sizeof(struct cbfs_header), &header);
+	copy_physical(header_off, sizeof(header), &header);
 
 	header.magic = ntohl(header.magic);
 	header.version = ntohl(header.version);
@@ -168,15 +162,17 @@ int main(int argc, char** argv) {
 	}
 
 	uint32_t align = header.align;
+
 	// loop through files
 	uint64_t off = end - ((uint64_t) header.romsize) +
 		((uint64_t) header.offset);
+	void *rom = map_physical(off, end - off);
 	while (off < end) {
 		if (verbose) {
 			fprintf(stderr, "Potential CBFS File Offset: %lx\n", off);
 		}
 		struct cbfs_file file;
-		copy_physical(off, sizeof(struct cbfs_file), &file);
+		memcpy(&file, rom, sizeof(file));
 
 		file.len = ntohl(file.len);
 		file.type = ntohl(file.type);
@@ -195,9 +191,8 @@ int main(int argc, char** argv) {
 			break;
 		}
 
-		size_t name_size = file.offset - sizeof(struct cbfs_file);
-		char *name = calloc(name_size, sizeof(char));
-		copy_physical(off+sizeof(struct cbfs_file), name_size, name);
+		size_t name_size = file.offset - sizeof(file);
+		char *name = (char *)rom + sizeof(file);
 
 		if (verbose) {
 			fprintf(stderr, "File name              : '%s'\n", name);
@@ -217,14 +212,12 @@ int main(int argc, char** argv) {
 				fprintf(stderr, "Seeking to %lx\n-------- Start Data\n", file_off);
 			}
 
-			char *file_data = malloc(file.len);
-			if (file_data == NULL) {
-				fprintf(stderr, "Failed to allocate memory for file data: length=%d\n",
-					file.len);
+			if (file_off + file.len > end) {
+				fprintf(stderr, "File offset/length extends beyond ROM");
 				return EXIT_FAILURE;
 			}
-			copy_physical(file_off, file.len, file_data);
 
+			char *file_data = (char *) rom + file.offset;
 			for (size_t offset = 0 ; offset < file.len ; ) {
 				const ssize_t rc = write(
 					STDOUT_FILENO,
@@ -246,19 +239,17 @@ int main(int argc, char** argv) {
 			}
 
 			do_read++;
-			free(file_data);
-			free(name);
 			break;
 		}
 
-		free(name);
 		uint64_t inc = (align + (file.offset + file.len) - 1) & (~(align-1));
 		off += inc;
+		rom += inc;
 		if (verbose) {
 			fprintf(stderr, "File Off+Len    : %x\n", file.offset + file.len);
 			fprintf(stderr, "Align           : %x\n", align);
 			fprintf(stderr, "Inc             : %lx\n", inc);
-			fprintf(stderr, "Next file align : %lx\n", off);
+			fprintf(stderr, "Next file off   : %lx\n", off);
 		}
 	}
 

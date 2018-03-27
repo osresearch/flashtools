@@ -151,7 +151,7 @@ map_physical(
 
 	close(fd);
 
-        return (void *)(addr + page_offset);
+	return (void *)(addr + page_offset);
 }
 
 void
@@ -169,6 +169,4 @@ copy_physical(
 	}
 
 	memcpy(dest, buf, len);
-
-	munmap((uint8_t *)buf, len);
 }
