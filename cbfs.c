@@ -30,11 +30,11 @@ static const struct option long_options[] = {
 static const char usage[] =
 "Usage: sudo cbfs [options]\n"
 "\n"
-"-h | -? | --help       This help\n"
-"-v | --verbose         Increase verbosity\n"
-"-r | --read file       Export a CBFS file to stdout\n"
-"-l | --list            List the names of CBFS files\n"
-"-t | --type 50         Filter to specific CBFS file type (hex)\n"
+"    -h | -? | --help       This help\n"
+"    -v | --verbose         Increase verbosity\n"
+"    -r | --read file       Export a CBFS file to stdout\n"
+"    -l | --list            List the names of CBFS files\n"
+"    -t | --type 50         Filter to specific CBFS file type (hex)\n"
 "\n";
 
 struct cbfs_header {
