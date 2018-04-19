@@ -151,5 +151,22 @@ map_physical(
 
 	close(fd);
 
-        return (void *)(addr + page_offset);
+	return (void *)(addr + page_offset);
+}
+
+void
+copy_physical(
+	uint64_t phys_addr,
+	size_t len,
+	volatile void * dest
+)
+{
+	const uint8_t * const buf = map_physical(phys_addr, len);
+	if (buf == NULL)
+	{
+		perror("mmap");
+		exit(EXIT_FAILURE);
+	}
+
+	memcpy(dest, buf, len);
 }

@@ -1,6 +1,7 @@
 TARGETS += flashtool
 TARGETS += poke
 TARGETS += peek
+TARGETS += cbfs
 
 CFLAGS += \
 	-std=c99 \
@@ -17,6 +18,7 @@ all: $(TARGETS)
 flashtool: flashtool.o spiflash.o util.o
 peek: peek.o util.o
 poke: poke.o util.o
+cbfs: cbfs.o util.o
 
 $(TARGETS):
 	$(CC) $(LDFLAGS) -o $@ $^
