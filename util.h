@@ -41,4 +41,10 @@ copy_physical(
 	volatile void *dest
 );
 
+extern void *
+map_file(
+  const char *name,
+  uint64_t *size
+);
+
 #endif

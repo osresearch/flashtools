@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 #include "util.h"
 
 #define CBFS_HEADER_MAGIC  0x4F524243
@@ -15,11 +17,20 @@
 #define CBFS_HEADER_VERSION2 0x31313132
 #define CBFS_HEADER_VERSION  CBFS_HEADER_VERSION2
 
+#define MAX_CBFS_FILE_HEADER_BUFFER 1024
+#define CBFS_CONTENT_DEFAULT_VALUE	(-1)
+#define CBFS_FILENAME_ALIGN	(16)
+#define CBFS_COMPONENT_RAW 0x50
+#define CBFS_COMPONENT_NULL 0xFFFFFFFF
+
 int verbose = 0;
 
 static const struct option long_options[] = {
 	{ "verbose",		0, NULL, 'v' },
 	{ "read",		1, NULL, 'r' },
+	{ "add",		1, NULL, 'a' },
+	{ "file",		1, NULL, 'f' },
+	{ "rom",		1, NULL, 'o' },
 	{ "list",		0, NULL, 'l' },
 	{ "type",		1, NULL, 't' },
 	{ "help",		0, NULL, 'h' },
@@ -30,12 +41,18 @@ static const struct option long_options[] = {
 static const char usage[] =
 "Usage: sudo cbfs [options]\n"
 "\n"
-"    -h | -? | --help       This help\n"
-"    -v | --verbose         Increase verbosity\n"
-"    -r | --read file       Export a CBFS file to stdout\n"
-"    -l | --list            List the names of CBFS files\n"
-"    -t | --type 50         Filter to specific CBFS file type (hex)\n"
+"    -h | -? | --help                   This help\n"
+"    -v | --verbose                     Increase verbosity\n"
+"    -o | --rom rom                     Use local file instead of ROM\n"
+"    -l | --list                        List the names of CBFS files\n"
+"    -r | --read name                   Export a CBFS file to stdout\n"
+"    -a | --add name -f | --file path   Add a CBFS file\n"
+"    -t | --type 50                     Filter/set to CBFS file type (hex)\n"
 "\n";
+
+uint64_t align_up(uint64_t off, uint32_t align) {
+	return (align + off - 1) & (~(align-1));
+}
 
 struct cbfs_header {
 	uint32_t magic;
@@ -62,6 +79,26 @@ struct cbfs_file {
 	char filename[];
 };
 
+size_t cbfs_calculate_file_header_size(const char *name)
+{
+	return (sizeof(struct cbfs_file) +
+		align_up(strlen(name) + 1, CBFS_FILENAME_ALIGN));
+}
+
+struct cbfs_file *cbfs_create_file_header(int type,
+          size_t len, const char *name)
+{
+	struct cbfs_file *entry = malloc(MAX_CBFS_FILE_HEADER_BUFFER);
+	memset(entry, CBFS_CONTENT_DEFAULT_VALUE, MAX_CBFS_FILE_HEADER_BUFFER);
+	memcpy(entry->magic, CBFS_FILE_MAGIC, sizeof(entry->magic));
+	entry->type = htonl(type);
+	entry->len = htonl(len);
+	entry->attributes_offset = 0;
+	entry->offset = htonl(cbfs_calculate_file_header_size(name));
+	memset(entry->filename, 0, ntohl(entry->offset) - sizeof(*entry));
+	strcpy(entry->filename, name);
+	return entry;
+}
 
 int main(int argc, char** argv) {
 	const char * const prog_name = argv[0];
@@ -72,12 +109,16 @@ int main(int argc, char** argv) {
 	}
 
 	int opt;
+	int use_file = 0;
+	int do_add = 0;
 	int do_read = 0;
 	int do_list = 0;
 	int do_type = 0;
 	uint32_t cbfs_file_type = 0;
+	const char * romname = NULL;
+	const char * cbfsname = NULL;
 	const char * filename = NULL;
-	while ((opt = getopt_long(argc, argv, "h?vlr:t:",
+	while ((opt = getopt_long(argc, argv, "h?vla:f:o:r:t:",
 		long_options, NULL)) != -1)
 	{
 		switch(opt)
@@ -88,9 +129,20 @@ int main(int argc, char** argv) {
 		case 'l':
 			do_list = 1;
 			break;
+		case 'o':
+			use_file = 1;
+			romname = optarg;
+			break;
+		case 'f':
+			filename = optarg;
+			break;
+		case 'a':
+			do_add = 1;
+			cbfsname = optarg;
+			break;
 		case 'r':
 			do_read = 1;
-			filename = optarg;
+			cbfsname = optarg;
 			break;
 		case 't':
 			do_type = 1;
@@ -105,7 +157,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	if (!do_list && !do_read) {
+	if (!do_list && !do_read && !do_add) {
 		fprintf(stderr, "%s", usage);
 		return EXIT_FAILURE;
 	}
@@ -118,25 +170,24 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	}
 
-	uint64_t end = 0x100000000;
-
-	if (verbose) {
-		fprintf(stderr, "Seeking to %lx\n", end-4);
-	}
 	int32_t header_delta;
-	copy_physical(end-4, sizeof(header_delta), &header_delta);
-
-	if (verbose) {
-		fprintf(stderr, "Header Offset: %d\n", header_delta);
-	}
-
-	uint64_t header_off = end + header_delta;
-
-	if (verbose) {
-		fprintf(stderr, "Seeking to %lx\n", header_off);
-	}
 	struct cbfs_header header;
-	copy_physical(header_off, sizeof(header), &header);
+	void *rom = NULL, *off = NULL;
+	uint64_t size;
+	const uint64_t mem_end = 0x100000000;
+
+	if (use_file) {
+		rom = map_file(romname, &size);
+		if (rom == NULL) {
+			fprintf(stderr, "Failed to map ROM file\n");
+			return EXIT_FAILURE;
+		}
+		header_delta = *((int32_t *)(rom + size - 4));
+		memcpy(&header, rom + size + header_delta, sizeof(header));
+	} else {
+		copy_physical(mem_end - 4, sizeof(header_delta), &header_delta);
+		copy_physical(mem_end + header_delta, sizeof(header), &header);
+	}
 
 	header.magic = ntohl(header.magic);
 	header.version = ntohl(header.version);
@@ -147,6 +198,7 @@ int main(int argc, char** argv) {
 	header.architecture = ntohl(header.architecture);
 
 	if (verbose) {
+		fprintf(stderr, "Header delta          : %d\n", header_delta);
 		fprintf(stderr, "Header magic          : %x\n", header.magic);
 		fprintf(stderr, "Header version        : %x\n", header.version);
 		fprintf(stderr, "Header ROM size       : %x\n", header.romsize);
@@ -161,18 +213,51 @@ int main(int argc, char** argv) {
 		return EXIT_FAILURE;
 	}
 
-	uint32_t align = header.align;
+	if (!use_file) {
+		size = (uint64_t) header.romsize;
+		rom = map_physical(mem_end - size, size);
+	}
+
+	// Setup file to add to ROM
+	struct cbfs_file *add_file;
+	void *add, *empty_start = NULL, *empty_end = NULL;
+	uint64_t add_need_size = 0;
+	if (do_add) {
+		if (!use_file) {
+			fprintf(stderr, "Adding directly to flash not yet supported");
+			return EXIT_FAILURE;
+		}
+
+		if (filename == NULL) {
+			fprintf(stderr, "-f || --file is required to add a file");
+			fprintf(stderr, "%s", usage);
+			return EXIT_FAILURE;
+		}
+
+		uint64_t add_size;
+		add = map_file(filename, &add_size);
+		if (rom == NULL) {
+			fprintf(stderr, "Failed to map ROM file\n");
+			return EXIT_FAILURE;
+		}
+
+		add_file = cbfs_create_file_header(
+			do_type ? cbfs_file_type : CBFS_COMPONENT_RAW,
+			add_size,
+			cbfsname
+		);
+		add_need_size = align_up(ntohl(add_file->offset) + ntohl(add_file->len),
+			(uint32_t)header.align);
+	}
 
 	// loop through files
-	uint64_t off = end - ((uint64_t) header.romsize) +
-		((uint64_t) header.offset);
-	void *rom = map_physical(off, end - off);
-	while (off < end) {
+	off = rom + ((uint64_t) header.offset);
+	while (off < rom + size) {
 		if (verbose) {
-			fprintf(stderr, "Potential CBFS File Offset: %lx\n", off);
+			fprintf(stderr, "Potential CBFS File Offset: %lx\n", (off - rom));
 		}
 		struct cbfs_file file;
-		memcpy(&file, rom, sizeof(file));
+		memcpy(&file, off, sizeof(file));
 
 		file.len = ntohl(file.len);
 		file.type = ntohl(file.type);
@@ -192,7 +277,7 @@ int main(int argc, char** argv) {
 		}
 
 		size_t name_size = file.offset - sizeof(file);
-		char *name = (char *)rom + sizeof(file);
+		char *name = (char *)off + sizeof(file);
 
 		if (verbose) {
 			fprintf(stderr, "File name              : '%s'\n", name);
@@ -205,19 +290,14 @@ int main(int argc, char** argv) {
 
 		if (do_read &&
 			(!do_type || (do_type && file.type == cbfs_file_type)) &&
-			strncmp(name, filename, name_size) == 0)
+			strncmp(name, cbfsname, name_size) == 0)
 		{
-			uint64_t file_off = off + file.offset;
-			if (verbose) {
-				fprintf(stderr, "Seeking to %lx\n-------- Start Data\n", file_off);
-			}
-
-			if (file_off + file.len > end) {
+			if (off + file.offset + file.len > rom + size) {
 				fprintf(stderr, "File offset/length extends beyond ROM");
 				return EXIT_FAILURE;
 			}
 
-			char *file_data = (char *) rom + file.offset;
+			char *file_data = (char *) off + file.offset;
 			for (size_t offset = 0 ; offset < file.len ; ) {
 				const ssize_t rc = write(
 					STDOUT_FILENO,
@@ -234,27 +314,62 @@ int main(int argc, char** argv) {
 				offset += rc;
 			}
 
-			if (verbose) {
-				fprintf(stderr, "\n-------- End Data\n");
-			}
-
 			do_read++;
 			break;
 		}
 
-		uint64_t inc = (align + (file.offset + file.len) - 1) & (~(align-1));
+		uint64_t inc = align_up(file.offset + file.len, (uint32_t)header.align);
+		if (do_add) {
+			if (strncmp(name, cbfsname, name_size) == 0) {
+				fprintf(stderr, "File already exists: %s\n", name);
+				return EXIT_FAILURE;
+			}
+
+			if (file.type == CBFS_COMPONENT_NULL && inc >= add_need_size) {
+				empty_start = off;
+				empty_end = off + inc;
+			}
+		}
+
 		off += inc;
-		rom += inc;
+	}
+
+	if (do_add) {
+		if (empty_start == NULL) {
+			fprintf(stderr, "Failed to find space to add this file\n");
+			return EXIT_FAILURE;
+		}
+
 		if (verbose) {
-			fprintf(stderr, "File Off+Len    : %x\n", file.offset + file.len);
-			fprintf(stderr, "Align           : %x\n", align);
-			fprintf(stderr, "Inc             : %lx\n", inc);
-			fprintf(stderr, "Next file off   : %lx\n", off);
+			fprintf(stdout, "Adding file between %lx:%lx\n",
+				(empty_start - rom), (empty_start + add_need_size - rom));
+		}
+
+		uint32_t file_offset = ntohl(add_file->offset);
+		// copy new file header
+		memcpy(empty_start, add_file, file_offset);
+		// copy new file data
+		memcpy(empty_start+file_offset, add, ntohl(add_file->len));
+
+		empty_start += add_need_size;
+		uint32_t min_entry_size = cbfs_calculate_file_header_size("");
+		if (empty_end - empty_start >= min_entry_size) {
+			if (verbose) {
+				fprintf(stdout, "Adding empty file between %lx:%lx\n",
+					(empty_start - rom), (empty_end - rom));
+			}
+			uint32_t new_empty_len = empty_end - empty_start - min_entry_size;
+			struct cbfs_file *new_empty_file =
+				cbfs_create_file_header(CBFS_COMPONENT_NULL, new_empty_len, "");
+
+			uint32_t empty_offset = ntohl(new_empty_file->offset);
+			// copy new file header
+			memcpy(empty_start, new_empty_file, empty_offset);
 		}
 	}
 
 	if (do_read == 1) {
-		fprintf(stderr, "Failed to find CBFS file named '%s'\n", filename);
+		fprintf(stderr, "Failed to find CBFS file named '%s'\n", cbfsname);
 		return EXIT_FAILURE;
 	}
 

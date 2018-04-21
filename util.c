@@ -170,3 +170,37 @@ copy_physical(
 
 	memcpy(dest, buf, len);
 }
+
+void *map_file(
+	const char *name,
+	uint64_t *size
+)
+{
+	int fd = open(name, O_RDWR);
+	if (fd < 0) {
+		return NULL;
+	}
+	struct stat st;
+	if (fstat(fd, &st) < 0) {
+		return NULL;
+	}
+
+	*size = st.st_size;
+	void *map = mmap(
+		NULL,
+		*size,
+		PROT_READ|PROT_WRITE,
+		MAP_SHARED,
+		fd,
+		0
+	);
+	if (map == MAP_FAILED)
+	{
+		int tmp_errno = errno;
+		close(fd);
+		errno = tmp_errno;
+		return NULL;
+	}
+	close(fd);
+	return map;
+}
