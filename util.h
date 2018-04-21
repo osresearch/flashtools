@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <sys/io.h>
+#include <sys/types.h>
 
 extern void *
 map_physical(
@@ -44,7 +45,8 @@ copy_physical(
 extern void *
 map_file(
   const char *name,
-  uint64_t *size
+  uint64_t *size,
+	const int readonly
 );
 
 #endif

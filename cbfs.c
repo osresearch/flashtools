@@ -177,9 +177,10 @@ int main(int argc, char** argv) {
 	const uint64_t mem_end = 0x100000000;
 
 	if (use_file) {
-		rom = map_file(romname, &size);
+		rom = map_file(romname, &size, 0);
 		if (rom == NULL) {
-			fprintf(stderr, "Failed to map ROM file\n");
+			fprintf(stderr, "Failed to map ROM file: %s '%s'\n", romname,
+				strerror(errno));
 			return EXIT_FAILURE;
 		}
 		header_delta = *((int32_t *)(rom + size - 4));
@@ -235,9 +236,10 @@ int main(int argc, char** argv) {
 		}
 
 		uint64_t add_size;
-		add = map_file(filename, &add_size);
-		if (rom == NULL) {
-			fprintf(stderr, "Failed to map ROM file\n");
+		add = map_file(filename, &add_size, 1);
+		if (add == NULL) {
+			fprintf(stderr, "Failed to map add file: %s '%s'\n", filename,
+				strerror(errno));
 			return EXIT_FAILURE;
 		}
 
@@ -248,6 +250,12 @@ int main(int argc, char** argv) {
 		);
 		add_need_size = align_up(ntohl(add_file->offset) + ntohl(add_file->len),
 			(uint32_t)header.align);
+
+		if (verbose) {
+			fprintf(stderr, "Looking for %lx space for '%s': %lx %x %x\n",
+				add_need_size, filename,
+				add_size, ntohl(add_file->offset), ntohl(add_file->len));
+		}
 	}
 
 	// loop through files
@@ -328,6 +336,15 @@ int main(int argc, char** argv) {
 			if (file.type == CBFS_COMPONENT_NULL && inc >= add_need_size) {
 				empty_start = off;
 				empty_end = off + inc;
+				if (verbose) {
+					fprintf(stderr, "Found space at %lx[%lx] for %lx\n",
+						(off - rom), inc, add_need_size);
+				}
+			} else {
+				if (verbose) {
+					fprintf(stderr, "Skipped space at %lx[%lx] for %lx\n",
+						(off - rom), inc, add_need_size);
+				}
 			}
 		}
 

@@ -173,10 +173,11 @@ copy_physical(
 
 void *map_file(
 	const char *name,
-	uint64_t *size
+	uint64_t *size,
+	const int readonly
 )
 {
-	int fd = open(name, O_RDWR);
+	int fd = open(name, readonly ? O_RDONLY : O_RDWR);
 	if (fd < 0) {
 		return NULL;
 	}
@@ -189,7 +190,7 @@ void *map_file(
 	void *map = mmap(
 		NULL,
 		*size,
-		PROT_READ|PROT_WRITE,
+		readonly ? PROT_READ : PROT_READ|PROT_WRITE,
 		MAP_SHARED,
 		fd,
 		0
