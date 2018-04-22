@@ -44,8 +44,8 @@ copy_physical(
 
 extern void *
 map_file(
-  const char *name,
-  uint64_t *size,
+	const char *name,
+	uint64_t *size,
 	const int readonly
 );
 
