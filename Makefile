@@ -2,6 +2,7 @@ TARGETS += flashtool
 TARGETS += poke
 TARGETS += peek
 TARGETS += cbfs
+TARGETS += uefi
 
 CFLAGS += \
 	-std=c99 \
@@ -19,6 +20,7 @@ flashtool: flashtool.o spiflash.o util.o
 peek: peek.o util.o
 poke: poke.o util.o
 cbfs: cbfs.o util.o
+uefi: uefi.o util.o
 
 $(TARGETS):
 	$(CC) $(LDFLAGS) -o $@ $^

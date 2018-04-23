@@ -50,10 +50,6 @@ static const char usage[] =
 "    -t | --type 50                     Filter/set to CBFS file type (hex)\n"
 "\n";
 
-uint64_t align_up(uint64_t off, uint32_t align) {
-	return (align + off - 1) & (~(align-1));
-}
-
 struct cbfs_header {
 	uint32_t magic;
 	uint32_t version;

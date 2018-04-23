@@ -205,3 +205,11 @@ void *map_file(
 	close(fd);
 	return map;
 }
+
+uint64_t align_up(
+	uint64_t off,
+	uint32_t align
+)
+{
+	return (align + off - 1) & (~(align-1));
+}

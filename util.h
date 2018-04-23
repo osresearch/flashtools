@@ -49,4 +49,10 @@ map_file(
 	const int readonly
 );
 
+extern uint64_t
+align_up(
+	uint64_t off,
+	uint32_t align
+);
+
 #endif
