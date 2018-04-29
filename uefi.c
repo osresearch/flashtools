@@ -25,23 +25,26 @@
 int verbose = 0;
 
 static const struct option long_options[] = {
-	{ "verbose",		0, NULL, 'v' },
-	{ "read",		1, NULL, 'r' },
-	{ "rom",		2, NULL, 'o' },
-	{ "list",		0, NULL, 'l' },
-	{ "help",		0, NULL, 'h' },
-	{ NULL,			0, NULL, 0 },
+	{ "verbose", 0, NULL, 'v' },
+	{ "file",    1, NULL, 'f' },
+	{ "write",   1, NULL, 'w' },
+	{ "read",    1, NULL, 'r' },
+	{ "rom",     1, NULL, 'o' },
+	{ "list",    0, NULL, 'l' },
+	{ "help",    0, NULL, 'h' },
+	{ NULL,      0, NULL, 0 },
 };
 
 
 static const char usage[] =
 "Usage: sudo uefi [options]\n"
 "\n"
-"    -h | -? | --help                   This help\n"
-"    -v | --verbose                     Increase verbosity\n"
-"    -o | --rom rom                     Use local file instead of ROM\n"
-"    -l | --list                        List the GUID and names of EFI files\n"
-"    -r | --read GUID                   Export an EFI file to stdout\n"
+"    -h | -? | --help                    This help\n"
+"    -v | --verbose                      Increase verbosity\n"
+"    -o | --rom file                     Use local file instead of internal ROM\n"
+"    -l | --list                         List the GUID and names of EFI files\n"
+"    -r | --read GUID                    Export an EFI file to stdout\n"
+"    -w | --write GUID -f | --file path  Replace an existing EFI file\n"
 "\n";
 
 struct efi_volume_header {
@@ -61,14 +64,14 @@ struct efi_volume_header {
 };
 
 struct efi_file_header {
-	uint8_t guid[16];
-	uint8_t header_um;
-	uint8_t file_um;
-	uint8_t type;
-	uint8_t attr;
-	uint8_t len[3];
-	uint8_t state;
-	uint64_t len64;
+	uint8_t guid[16];         // 0x00
+	uint8_t header_sum;       // 0x10
+	uint8_t file_sum;         // 0x11
+	uint8_t type;             // 0x12
+	uint8_t attr;             // 0x13
+	uint8_t len[3];           // 0x14
+	uint8_t state;            // 0x17
+	uint64_t len64;           // 0x18 optional extended length field
 };
 
 struct efi_section_header {
@@ -80,6 +83,12 @@ uint32_t size24(uint8_t len[3]) {
 	return (uint32_t)len[0] +
 		((uint32_t)(len[1]) << 8) +
 		((uint32_t)(len[2]) << 16);
+}
+
+void setsize24(uint8_t len[3], uint32_t size) {
+	len[2] = size >> 16 & 0xFF;
+	len[1] = size >> 8 & 0xFF;
+	len[0] = size & 0xFF;
 }
 
 char *guid_string(uint8_t guid[16]) {
@@ -99,6 +108,141 @@ char *guid_string(uint8_t guid[16]) {
 	return s;
 }
 
+int copy_buffer(void **dst, void *end, void *src, size_t len) {
+	if (*dst + len >= end) {
+		return EXIT_FAILURE;
+	}
+	memcpy(*dst, src, len);
+	*dst += len;
+	return EXIT_SUCCESS;
+}
+
+int align_buffer(void **dst, void *start, void *end, int align, char fill) {
+	while (((*dst - start) & (align - 1)) % align != 0) {
+		if (*dst >= end) {
+			return EXIT_FAILURE;
+		}
+		*((char *)*dst) = fill;
+		*dst += 1;
+	}
+	return EXIT_SUCCESS;
+}
+
+int add_section(
+	void **dst,
+	void *end,
+	void *start,
+	uint32_t len24,
+	uint8_t type,
+	void *src
+) {
+	if (align_buffer(dst, start, end, 0x4, 0x00) < 0) {
+		return EXIT_FAILURE;
+	}
+	if (copy_buffer(dst, end, &len24, 3) < 0) {
+		return EXIT_FAILURE;
+	}
+	if (copy_buffer(dst, end, &type, sizeof(type)) < 0) {
+		return EXIT_FAILURE;
+	}
+	if (copy_buffer(dst, end, src, len24-0x4) < 0) {
+		return EXIT_FAILURE;
+	}
+	return EXIT_SUCCESS;
+}
+
+// assumes the full FV and a single FFS exists
+int replace_fv_ffs_raw(
+	void *rom,
+	struct efi_volume_header *vol,
+	struct efi_file_header *file,
+	uint64_t file_len,
+	uint32_t file_header_len,
+	const char *filename
+) {
+	void *newfiledata = NULL;
+	uint64_t newsize;
+	newfiledata = map_file(filename, &newsize, 0);
+
+	uint64_t volsize = vol->len;
+	void *new = malloc(volsize), *newend = new+volsize;
+	void *newoff = new;
+
+	if (copy_buffer(&newoff, newend, vol, vol->header_len) < 0) {
+		return EXIT_FAILURE;
+	}
+
+	struct efi_file_header *newfile = newoff;
+	if (copy_buffer(&newoff, newend, file, 0x18) < 0) {
+		return EXIT_FAILURE;
+	}
+
+	// start of data
+	void *newdata = newoff;
+	if (add_section(&newoff, newend, new,
+		newsize + 0x4, EFI_SECTION_RAW, newfiledata) < 0
+	) {
+		return EXIT_FAILURE;
+	}
+
+	// copy guid / version sections
+	void *soff = (void *)file + file_header_len;
+	while (soff < (void *)file + file_len) {
+		struct efi_section_header *section = soff;
+		uint32_t section_len = size24(section->len);
+		if (section_len == 0) {
+			break;
+		}
+
+		if (verbose) {
+			fprintf(stderr, "Checking old file for sections: %lx %x %x to %lx\n",
+				(soff - rom), section_len, section->type, (newoff - (void*)newfile));
+		}
+		if (section->type == EFI_SECTION_USER_INTERFACE ||
+			section->type == EFI_SECTION_VERSION
+		) {
+			if (verbose) {
+				fprintf(stderr, "Copying old file section: %lx %x %x\n",
+					(soff - rom), section_len, section->type);
+			}
+			if (add_section(&newoff, newend, new,
+				section_len, section->type, soff + 0x4) < 0
+			) {
+				return EXIT_FAILURE;
+			}
+		}
+		soff += align_up(section_len, 4);
+	}
+
+	// fix the FFS header
+	uint32_t newfilesize = newoff - (void *)newfile;
+	setsize24(newfile->len, newfilesize);
+	newfile->header_sum = 0;
+	newfile->file_sum = 0;
+	uint32_t sum = 0;
+	for (int n = 0; n < 0x17; n++) {
+		sum -= *((uint8_t *) newfile + n);
+	}
+	newfile->header_sum = sum & 0xFF;
+
+	soff = newdata;
+	sum = 0;
+	while (soff < newoff) {
+		sum -= *((uint8_t *) soff);
+		soff++;
+	}
+	newfile->file_sum = sum & 0xFF;
+
+	// pad the remainder of FV
+	memset(newoff, 0xFF, newend - newoff);
+
+	// copy over old FV
+	memcpy(vol, new, volsize);
+
+	free(new);
+	return EXIT_SUCCESS;
+}
+
 int main(int argc, char** argv) {
 	const char * const prog_name = argv[0];
 	if (argc <= 1)
@@ -111,9 +255,11 @@ int main(int argc, char** argv) {
 	int use_file = 0;
 	int do_read = 0;
 	int do_list = 0;
+	int do_write = 0;
 	const char * romname = NULL;
 	const char * target_guid = NULL;
-	while ((opt = getopt_long(argc, argv, "h?vla:f:o:r:t:",
+	const char * filename = NULL;
+	while ((opt = getopt_long(argc, argv, "h?vlw:f:o:r:",
 		long_options, NULL)) != -1)
 	{
 		switch(opt)
@@ -132,6 +278,13 @@ int main(int argc, char** argv) {
 			do_read = 1;
 			target_guid = optarg;
 			break;
+		case 'w':
+			do_write = 1;
+			target_guid = optarg;
+			break;
+		case 'f':
+			filename = optarg;
+			break;
 		case '?': case 'h':
 			fprintf(stderr, "%s", usage);
 			return EXIT_SUCCESS;
@@ -141,7 +294,7 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	if (!do_list && !do_read) {
+	if (!do_list && !do_read && !do_write) {
 		fprintf(stderr, "%s", usage);
 		return EXIT_FAILURE;
 	}
@@ -175,17 +328,17 @@ int main(int argc, char** argv) {
 
 	void *voff = rom + size;
 	while (voff >= rom) {
-		struct efi_volume_header *header = voff;
+		struct efi_volume_header *vol = voff;
 
-		if (header->sig != EFI_VOLUME_SIGNATURE) {
+		if (vol->sig != EFI_VOLUME_SIGNATURE) {
 			voff -= EFI_PAGE_SIZE;
 			continue;
 		}
 
-		char *fv_guid = guid_string(header->guid);
+		char *fv_guid = guid_string(vol->guid);
 		if (verbose) {
 			fprintf(stderr, "Possible FV at %lx[%lx]+%x\n",
-				(voff-rom), header->len, header->header_len);
+				(voff-rom), vol->len, vol->header_len);
 			fprintf(stderr, "FV GUID: %s\n", fv_guid);
 		}
 
@@ -193,8 +346,8 @@ int main(int argc, char** argv) {
 			strcmp(fv_guid, EFI_FIRMWARE_GUID1) == 0 ||
 			strcmp(fv_guid, EFI_FIRMWARE_GUID2) == 0;
 
-		void *foff = voff + header->header_len;
-		while (foff < voff+header->len) {
+		void *foff = voff + vol->header_len;
+		while (foff < voff+vol->len) {
 			struct efi_file_header *file = foff;
 
 			uint64_t file_len = size24(file->len);
@@ -225,12 +378,32 @@ int main(int argc, char** argv) {
 				fprintf(stdout, "%s\n", file_guid);
 			}
 
+			if (do_write &&
+				strcmp(file_guid, target_guid) == 0
+			) {
+				if (verbose) {
+					fprintf(stderr, "Replacing FFS at %lx[%lx] with '%s'\n",
+						(foff-rom), file_len, filename);
+				}
+				if (replace_fv_ffs_raw(rom, vol, file,
+					file_len, header_len, filename) < 0
+				) {
+					fprintf(stderr, "Failed to replace FFS\n");
+					return EXIT_FAILURE;
+				}
+			}
+
 			void *soff = foff+header_len;
 			while (soff < foff+file_len) {
 				struct efi_section_header *section = soff;
 				uint64_t section_len = size24(section->len);
+				uint32_t section_data_offset = 0x4;
 				if (section_len == 0) {
 					break;
+				}
+				if (section_len == 0xFFFFFF) {
+					section_len = *((uint64_t *) section + 0x4);
+					section_data_offset += 0x4;
 				}
 
 				if (verbose) {
@@ -243,12 +416,13 @@ int main(int argc, char** argv) {
 					strcmp(file_guid, target_guid) == 0 &&
 					section->type == EFI_SECTION_RAW
 				) {
-					char *section_data = (char *) soff + 4;
-					for (size_t offset = 0 ; offset < section_len ; ) {
+					char *section_data = (char *) soff + section_data_offset;
+					uint64_t section_data_len = section_len - section_data_offset;
+					for (size_t offset = 0 ; offset < section_data_len; ) {
 						const ssize_t rc = write(
 							STDOUT_FILENO,
 							section_data + offset,
-							section_len - offset
+							section_data_len - offset
 						);
 
 						if (rc <= 0) {

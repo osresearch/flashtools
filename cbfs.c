@@ -43,7 +43,7 @@ static const char usage[] =
 "\n"
 "    -h | -? | --help                   This help\n"
 "    -v | --verbose                     Increase verbosity\n"
-"    -o | --rom rom                     Use local file instead of ROM\n"
+"    -o | --rom file                    Use local file instead of internal ROM\n"
 "    -l | --list                        List the names of CBFS files\n"
 "    -r | --read name                   Export a CBFS file to stdout\n"
 "    -a | --add name -f | --file path   Add a CBFS file\n"
