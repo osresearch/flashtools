@@ -312,7 +312,8 @@ int main(int argc, char** argv) {
 	const uint64_t mem_end = 0x100000000;
 
 	if (use_file) {
-		rom = map_file(romname, &size, 0);
+		int readonly = do_write ? 0 : 1;
+		rom = map_file(romname, &size, readonly);
 	} else {
 		size = 0x2000000; // GRRR: FIX TO BE REAL
 		rom = map_physical(mem_end - size, size);

@@ -173,7 +173,8 @@ int main(int argc, char** argv) {
 	const uint64_t mem_end = 0x100000000;
 
 	if (use_file) {
-		rom = map_file(romname, &size, 0);
+		int readonly = do_add ? 0 : 1;
+		rom = map_file(romname, &size, readonly);
 		if (rom == NULL) {
 			fprintf(stderr, "Failed to map ROM file: %s '%s'\n", romname,
 				strerror(errno));
