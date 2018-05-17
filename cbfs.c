@@ -47,6 +47,7 @@ static const char usage[] =
 "    -l | --list                        List the names of CBFS files\n"
 "    -r | --read name                   Export a CBFS file to stdout\n"
 "    -a | --add name -f | --file path   Add a CBFS file\n"
+"    -d | --delete name                 Delete a CBFS file\n"
 "    -t | --type 50                     Filter/set to CBFS file type (hex)\n"
 "\n";
 
@@ -106,6 +107,7 @@ int main(int argc, char** argv) {
 
 	int opt;
 	int use_file = 0;
+	int do_delete = 0;
 	int do_add = 0;
 	int do_read = 0;
 	int do_list = 0;
@@ -114,7 +116,7 @@ int main(int argc, char** argv) {
 	const char * romname = NULL;
 	const char * cbfsname = NULL;
 	const char * filename = NULL;
-	while ((opt = getopt_long(argc, argv, "h?vla:f:o:r:t:",
+	while ((opt = getopt_long(argc, argv, "h?vld:a:f:o:r:t:",
 		long_options, NULL)) != -1)
 	{
 		switch(opt)
@@ -128,6 +130,10 @@ int main(int argc, char** argv) {
 		case 'o':
 			use_file = 1;
 			romname = optarg;
+			break;
+		case 'd':
+			do_delete = 1;
+			cbfsname = optarg;
 			break;
 		case 'f':
 			filename = optarg;
@@ -153,8 +159,13 @@ int main(int argc, char** argv) {
 		}
 	}
 
-	if (!do_list && !do_read && !do_add) {
+	if (!do_list && !do_read && !do_add && !do_delete) {
 		fprintf(stderr, "%s", usage);
+		return EXIT_FAILURE;
+	}
+
+	if (do_add && do_delete) {
+		fprintf(stderr, "Unsupported option: add and delete at the same time");
 		return EXIT_FAILURE;
 	}
 
@@ -173,7 +184,7 @@ int main(int argc, char** argv) {
 	const uint64_t mem_end = 0x100000000;
 
 	if (use_file) {
-		int readonly = do_add ? 0 : 1;
+		int readonly = do_add || do_delete ? 0 : 1;
 		rom = map_file(romname, &size, readonly);
 		if (rom == NULL) {
 			fprintf(stderr, "Failed to map ROM file: %s '%s'\n", romname,
@@ -252,6 +263,16 @@ int main(int argc, char** argv) {
 			fprintf(stderr, "Looking for %lx space for '%s': %lx %x %x\n",
 				add_need_size, filename,
 				add_size, ntohl(add_file->offset), ntohl(add_file->len));
+		}
+	}
+
+	// Delete file trackers
+	void *delete_empty_start = NULL, *delete_empty_end = NULL;
+	int last_file_delete = 0;
+	if (do_delete) {
+		if (!use_file) {
+			fprintf(stderr, "Deleting directly from flash not yet supported");
+			return EXIT_FAILURE;
 		}
 	}
 
@@ -345,6 +366,30 @@ int main(int argc, char** argv) {
 			}
 		}
 
+		if (do_delete) {
+			if (strncmp(name, cbfsname, name_size) == 0) {
+				if (delete_empty_start == NULL) {
+					delete_empty_start = off;
+				}
+				delete_empty_end = off + inc;
+				last_file_delete = 1;
+			} else if (file.type == CBFS_COMPONENT_NULL) {
+				if (last_file_delete) {
+					delete_empty_end = off + inc;
+				} else {
+					if (delete_empty_end == NULL) {
+						delete_empty_start = off;
+					}
+				}
+				last_file_delete = 0;
+			} else {
+				if (delete_empty_end == NULL) {
+					delete_empty_start = NULL;
+				}
+				last_file_delete = 0;
+			}
+		}
+
 		off += inc;
 	}
 
@@ -355,7 +400,7 @@ int main(int argc, char** argv) {
 		}
 
 		if (verbose) {
-			fprintf(stdout, "Adding file between %lx:%lx\n",
+			fprintf(stderr, "Adding file between %lx:%lx\n",
 				(empty_start - rom), (empty_start + add_need_size - rom));
 		}
 
@@ -369,7 +414,7 @@ int main(int argc, char** argv) {
 		uint32_t min_entry_size = cbfs_calculate_file_header_size("");
 		if (empty_end - empty_start >= min_entry_size) {
 			if (verbose) {
-				fprintf(stdout, "Adding empty file between %lx:%lx\n",
+				fprintf(stderr, "Adding empty file between %lx:%lx\n",
 					(empty_start - rom), (empty_end - rom));
 			}
 			uint32_t new_empty_len = empty_end - empty_start - min_entry_size;
@@ -380,6 +425,29 @@ int main(int argc, char** argv) {
 			// copy new file header
 			memcpy(empty_start, new_empty_file, empty_offset);
 		}
+	}
+
+	if (do_delete) {
+		if (delete_empty_end == NULL) {
+			fprintf(stderr, "Failed to find CBFS file named '%s'\n", cbfsname);
+			return EXIT_FAILURE;
+		}
+		if (verbose) {
+			fprintf(stderr, "Deleting file between %lx:%lx\n",
+				(delete_empty_start - rom), (delete_empty_end - rom));
+		}
+		uint32_t min_entry_size = cbfs_calculate_file_header_size("");
+		uint32_t new_empty_len = delete_empty_end - delete_empty_start
+			- min_entry_size;
+		struct cbfs_file *new_empty_file =
+			cbfs_create_file_header(CBFS_COMPONENT_NULL, new_empty_len, "");
+
+		uint32_t empty_offset = ntohl(new_empty_file->offset);
+		// copy new empty header
+		memcpy(delete_empty_start, new_empty_file, empty_offset);
+		// memset contents to default
+		memset(delete_empty_start + empty_offset, CBFS_CONTENT_DEFAULT_VALUE,
+			(delete_empty_end - delete_empty_start - empty_offset));
 	}
 
 	if (do_read == 1) {
