@@ -187,6 +187,10 @@ void *map_file(
 	}
 
 	*size = st.st_size;
+	if (*size == 0) {
+		errno = 0; // not a failure
+		return NULL;
+	}
 	void *map = mmap(
 		NULL,
 		*size,

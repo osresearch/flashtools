@@ -245,7 +245,7 @@ int main(int argc, char** argv) {
 
 		uint64_t add_size;
 		add = map_file(filename, &add_size, 1);
-		if (add == NULL) {
+		if (add == NULL && errno > 0) {
 			fprintf(stderr, "Failed to map add file: %s '%s'\n", filename,
 				strerror(errno));
 			return EXIT_FAILURE;
