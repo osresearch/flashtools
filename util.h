@@ -5,6 +5,12 @@
 #include <sys/io.h>
 #include <sys/types.h>
 
+#ifdef __PPC64__
+#define MFENCE_ASM "sync"
+#else
+#define MFENCE_ASM "mfence"
+#endif
+
 extern void *
 map_physical(
 	uint64_t phys_addr,

@@ -80,7 +80,7 @@ memcpy_##WIDTH( \
 			dest[i] |= src[i]; \
 		else \
 			dest[i] = src[i]; \
-		__asm__ __volatile__("mfence"); \
+		__asm__ __volatile__(MFENCE_ASM); \
 	} \
 }
 
