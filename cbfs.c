@@ -1,3 +1,10 @@
+/*
+ * FMAP search code was taken from coreboot and is licensed under BSD-3-Clause
+ */
+
+#define _DEFAULT_SOURCE
+
+#include <ctype.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -10,6 +17,7 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <endian.h>
 #include "util.h"
 
 #define CBFS_HEADER_MAGIC  0x4F524243
@@ -76,6 +84,175 @@ struct cbfs_file {
 	char filename[];
 };
 
+#define FMAP_SIGNATURE      "__FMAP__"
+#define FMAP_VER_MAJOR		1	/* this header's FMAP minor version */
+#define FMAP_VER_MINOR		1	/* this header's FMAP minor version */
+#define FMAP_STRLEN		32	/* maximum length for strings, */
+
+/* Mapping of volatile and static regions in firmware binary */
+struct fmap_area {
+	uint32_t offset;		/* offset relative to base */
+	uint32_t size;			/* size in bytes */
+	uint8_t  name[FMAP_STRLEN];	/* descriptive name */
+	uint16_t flags;			/* flags for this area */
+} __attribute__((__packed__));
+
+struct fmap {
+	uint8_t  signature[8];		/* "__FMAP__" (0x5F5F464D41505F5F) */
+	uint8_t  ver_major;		/* major version */
+	uint8_t  ver_minor;		/* minor version */
+	uint64_t base;			/* address of the firmware binary */
+	uint32_t size;			/* size of firmware binary in bytes */
+	uint8_t  name[FMAP_STRLEN];	/* name of this firmware binary */
+	uint16_t nareas;		/* number of areas described by
+					   fmap_areas[] below */
+	struct fmap_area areas[];
+} __attribute__((__packed__));
+
+/* returns size of fmap data structure if successful, <0 to indicate error */
+int fmap_size(const struct fmap *fmap)
+{
+	if (!fmap)
+		return -1;
+
+	return sizeof(*fmap) + (le16toh(fmap->nareas) * sizeof(struct fmap_area));
+}
+
+/* Make a best-effort assessment if the given fmap is real */
+static int is_valid_fmap(const struct fmap *fmap)
+{
+	if (memcmp(fmap, FMAP_SIGNATURE, strlen(FMAP_SIGNATURE)) != 0)
+		return 0;
+	/* strings containing the magic tend to fail here */
+	if (fmap->ver_major != FMAP_VER_MAJOR)
+		return 0;
+	/* a basic consistency check: flash should be larger than fmap */
+	if (le32toh(fmap->size) <
+		sizeof(*fmap) + le16toh(fmap->nareas) * sizeof(struct fmap_area))
+		return 0;
+
+	/* fmap-alikes along binary data tend to fail on having a valid,
+	 * null-terminated string in the name field.*/
+	int i = 0;
+	while (i < FMAP_STRLEN) {
+		if (fmap->name[i] == 0)
+			break;
+		if (!isgraph(fmap->name[i]))
+			return 0;
+		if (i == FMAP_STRLEN - 1) {
+			/* name is specified to be null terminated single-word string
+			 * without spaces. We did not break in the 0 test, we know it
+			 * is a printable spaceless string but we're seeing FMAP_STRLEN
+			 * symbols, which is one too many.
+			 */
+			 return 0;
+		}
+		i++;
+	}
+
+	return 1;
+}
+
+/* brute force linear search */
+static long int fmap_lsearch(const uint8_t *image, size_t len)
+{
+	unsigned long int offset;
+	int fmap_found = 0;
+
+	for (offset = 0; offset < len - strlen(FMAP_SIGNATURE); offset++) {
+		if (is_valid_fmap((const struct fmap *)&image[offset])) {
+			fmap_found = 1;
+			break;
+		}
+	}
+
+	if (!fmap_found)
+		return -1;
+
+	if (offset + fmap_size((const struct fmap *)&image[offset]) > len)
+		return -1;
+
+	return offset;
+}
+
+/* if image length is a power of 2, use binary search */
+static long int fmap_bsearch(const uint8_t *image, size_t len)
+{
+	unsigned long int offset = -1;
+	int fmap_found = 0, stride;
+
+	/*
+	 * For efficient operation, we start with the largest stride possible
+	 * and then decrease the stride on each iteration. Also, check for a
+	 * remainder when modding the offset with the previous stride. This
+	 * makes it so that each offset is only checked once.
+	 */
+	for (stride = len / 2; stride >= 16; stride /= 2) {
+		if (fmap_found)
+			break;
+
+		for (offset = 0;
+			 offset < len - strlen(FMAP_SIGNATURE);
+			 offset += stride) {
+			if ((offset % (stride * 2) == 0) && (offset != 0))
+				continue;
+			if (is_valid_fmap(
+					(const struct fmap *)&image[offset])) {
+				fmap_found = 1;
+				break;
+			}
+		}
+	}
+
+	if (!fmap_found)
+		return -1;
+
+	if (offset + fmap_size((const struct fmap *)&image[offset]) > len)
+		return -1;
+
+	return offset;
+}
+
+static int popcnt(unsigned int u)
+{
+	int count;
+
+	/* K&R method */
+	for (count = 0; u; count++)
+		u &= (u - 1);
+
+	return count;
+}
+
+static long int fmap_find(const uint8_t *image, unsigned int image_len)
+{
+	long int ret = -1;
+
+	if ((image == NULL) || (image_len == 0))
+		return -1;
+
+	if (popcnt(image_len) == 1)
+		ret = fmap_bsearch(image, image_len);
+	else
+		ret = fmap_lsearch(image, image_len);
+
+	return ret;
+}
+
+/* brute force linear search */
+static long int cbfs_lsearch(const uint8_t *image, size_t image_len, int start)
+{
+	size_t offset;
+	uint32_t magic = be32toh(CBFS_HEADER_MAGIC);
+
+	for (offset = start; offset < image_len - sizeof(magic); offset++) {
+		if (memcmp(&image[offset], &magic, sizeof(magic)) == 0)
+			return offset;
+	}
+
+	return -1;
+}
+
 size_t cbfs_calculate_file_header_size(const char *name)
 {
 	return (sizeof(struct cbfs_file) +
@@ -95,6 +272,24 @@ struct cbfs_file *cbfs_create_file_header(int type,
 	memset(entry->filename, 0, ntohl(entry->offset) - sizeof(*entry));
 	strcpy(entry->filename, name);
 	return entry;
+}
+
+static int64_t find_cbfs(const char *romname, const uint8_t *rom, size_t size)
+{
+	long int fmap_offset = fmap_find(rom, size);
+	if (fmap_offset < 0) {
+		fprintf(stderr, "Failed to find FMAP in ROM file: %s\n", romname);
+		return -1;
+	}
+
+	int64_t offset = cbfs_lsearch(rom, size, fmap_offset);
+	if (offset < 0) {
+		fprintf(stderr, "Failed to find CBFS in ROM file with FMAP: %s\n",
+                romname);
+		return -1;
+	}
+
+	return offset;
 }
 
 int main(int argc, char** argv) {
@@ -191,8 +386,19 @@ int main(int argc, char** argv) {
 				strerror(errno));
 			return EXIT_FAILURE;
 		}
+
+		int64_t offset;
+
 		header_delta = *((int32_t *)(rom + size - 4));
-		memcpy(&header, rom + size + header_delta, sizeof(header));
+		if ((uint64_t)header_delta > size) {
+			offset = find_cbfs(romname, rom, size);
+			if (offset < 0)
+				return EXIT_FAILURE;
+		} else {
+			offset = size + header_delta;
+		}
+
+		memcpy(&header, rom + offset, sizeof(header));
 	} else {
 		copy_physical(mem_end - 4, sizeof(header_delta), &header_delta);
 		copy_physical(mem_end + header_delta, sizeof(header), &header);
