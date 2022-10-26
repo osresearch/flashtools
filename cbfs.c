@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <endian.h>
+#include "pnor.h"
 #include "util.h"
 
 #define CBFS_HEADER_MAGIC  0x4F524243
@@ -274,6 +275,125 @@ struct cbfs_file *cbfs_create_file_header(int type,
 	return entry;
 }
 
+/* pnor.c has contains code, but that one uses mmaped file */
+static void *copy_cb(uint64_t *rom_size)
+{
+#ifndef __PPC64__
+	return NULL;
+#endif
+
+	FILE *mtd = fopen("/dev/mtd0", "r");
+	if (mtd == NULL) {
+		fprintf(stderr, "Failed to open /dev/mtd0\n");
+		return NULL;
+	}
+
+	struct ffs_hdr ffs_hdr;
+	if (fread(&ffs_hdr, sizeof(ffs_hdr), 1, mtd) != 1) {
+		fclose(mtd);
+		fprintf(stderr, "Failed to read PNOR header from /dev/mtd0\n");
+		return NULL;
+	}
+
+	if (be32toh(ffs_hdr.magic) != FFS_MAGIC) {
+		fclose(mtd);
+		fprintf(stderr, "Invalid header magic: 0x%08llx\n",
+			(unsigned long long)be32toh(ffs_hdr.magic));
+		return NULL;
+	}
+
+	if (be32toh(ffs_hdr.version) != FFS_VERSION_1) {
+		fclose(mtd);
+		fprintf(stderr, "Invalid header version: 0x%08llx\n",
+			(unsigned long long)be32toh(ffs_hdr.version));
+		return NULL;
+	}
+
+	uint32_t i;
+	struct ffs_entry entry;
+
+	for (i = 0; i < be32toh(ffs_hdr.entry_count); i++) {
+		if (fread(&entry, sizeof(entry), 1, mtd) != 1) {
+			fclose(mtd);
+			fprintf(stderr, "Failed to read PNOR entry #%d from /dev/mtd0\n",
+					i);
+			return NULL;
+		}
+
+		if (strcmp(entry.name, "HBI") == 0)
+			break;
+	}
+
+	if (i >= be32toh(ffs_hdr.entry_count)) {
+		fclose(mtd);
+		fprintf(stderr, "Failed to find HBI PNOR entry in /dev/mtd0\n");
+		return NULL;
+	}
+
+	uint32_t start = be32toh(ffs_hdr.block_size) * be32toh(entry.base);
+	uint32_t size = be32toh(entry.actual);
+
+	if (be32toh(entry.user.data[1]) & FFS_ENTRY_VERS_SHA512) {
+		/* Skip PNOR partition header */
+		start += 0x1000;
+
+		/* Possibly skip ECC of the header */
+		if (be32toh(entry.user.data[0]) & FFS_ENRY_INTEG_ECC)
+			start += 0x200;
+	}
+
+	if (fseek(mtd, start, SEEK_SET) != 0) {
+		fclose(mtd);
+		fprintf(stderr, "Failed to seek to HBI partition in /dev/mtd0\n");
+		return NULL;
+	}
+
+	uint8_t *hbi = malloc(size);
+	if (hbi == NULL) {
+		fclose(mtd);
+		fprintf(stderr, "Failed to allocate memory for HBI partition\n");
+		return NULL;
+	}
+
+	uint8_t *p = hbi;
+	if (be32toh(entry.user.data[0]) & FFS_ENRY_INTEG_ECC) {
+		char buf[16 * 1024];
+		for (i = 0; i < size; i++) {
+			if (i % sizeof(buf) == 0) {
+				if (fread(buf, sizeof(buf), 1, mtd) != 1) {
+					fclose(mtd);
+					free(hbi);
+					fprintf(stderr, "Failed reading HBI partition\n");
+					return NULL;
+				}
+			}
+
+			// TODO: verify and correct data using ECC
+			if ((i + 1) % 9 != 0)
+				*p++ = buf[i % sizeof(buf)];
+		}
+	} else {
+		char buf[16 * 1024];
+		for (i = 0; i < size; i++) {
+			if (i % sizeof(buf) == 0) {
+				if (fread(buf, sizeof(buf), 1, mtd) != 1) {
+					fclose(mtd);
+					free(hbi);
+					fprintf(stderr, "Failed reading HBI partition\n");
+					return NULL;
+				}
+			}
+
+			*p++ = buf[i % sizeof(buf)];
+		}
+	}
+
+	fclose(mtd);
+
+	*rom_size = p - hbi;
+	return hbi;
+}
+
 static int64_t find_cbfs(const char *romname, const uint8_t *rom, size_t size)
 {
 	long int fmap_offset = fmap_find(rom, size);
@@ -375,8 +495,9 @@ int main(int argc, char** argv) {
 	int32_t header_delta;
 	struct cbfs_header header;
 	void *rom = NULL, *off = NULL;
-	uint64_t size;
+	uint64_t size, cb_size;
 	const uint64_t mem_end = 0x100000000;
+	void *cb_map;
 
 	if (use_file) {
 		int readonly = do_add || do_delete ? 0 : 1;
@@ -400,8 +521,17 @@ int main(int argc, char** argv) {
 
 		memcpy(&header, rom + offset, sizeof(header));
 	} else {
-		copy_physical(mem_end - 4, sizeof(header_delta), &header_delta);
-		copy_physical(mem_end + header_delta, sizeof(header), &header);
+		cb_map = copy_cb(&cb_size);
+		if (cb_map != NULL) {
+			int64_t offset = find_cbfs("/dev/mtd0", cb_map, cb_size);
+			if (offset < 0)
+				return EXIT_FAILURE;
+
+			memcpy(&header, cb_map + offset, sizeof(header));
+		} else {
+			copy_physical(mem_end - 4, sizeof(header_delta), &header_delta);
+			copy_physical(mem_end + header_delta, sizeof(header), &header);
+		}
 	}
 
 	header.magic = ntohl(header.magic);
@@ -429,8 +559,13 @@ int main(int argc, char** argv) {
 	}
 
 	if (!use_file) {
-		size = (uint64_t) header.romsize;
-		rom = map_physical(mem_end - size, size);
+		if (cb_map == NULL) {
+			size = (uint64_t) header.romsize;
+			rom = map_physical(mem_end - size, size);
+		} else {
+			rom = cb_map;
+			size = cb_size;
+		}
 	}
 
 	// Setup file to add to ROM
