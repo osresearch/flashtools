@@ -53,7 +53,7 @@ write_mmio_##NAME( \
 ) \
 { \
 	*(volatile TYPE*)(offset + (uint8_t*) base) = value; \
-	__asm__ __volatile__ ("mfence" : : : "memory"); \
+	__asm__ __volatile__ (MFENCE_ASM : : : "memory"); \
 } \
 
 

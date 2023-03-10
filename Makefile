@@ -3,6 +3,7 @@ TARGETS += poke
 TARGETS += peek
 TARGETS += cbfs
 TARGETS += uefi
+TARGETS += pnor
 
 CFLAGS += \
 	-std=c99 \
@@ -21,6 +22,7 @@ peek: peek.o util.o
 poke: poke.o util.o
 cbfs: cbfs.o util.o
 uefi: uefi.o util.o
+pnor: pnor.o util.o
 
 $(TARGETS):
 	$(CC) $(LDFLAGS) -o $@ $^
